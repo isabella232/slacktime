@@ -1,57 +1,131 @@
 (ns time-plan.clj.core
-  (:require [cemerick.friend        :as friend]
-            [friend-oauth2.workflow :as oauth2]
-            [friend-oauth2.util     :refer [format-config-uri]]
-            [environ.core           :refer [env]]
-            [ring.middleware.resource :refer [wrap-resource]]
-            [ring.util.response :refer [response]]
-            [ring.adapter.jetty :refer [run-jetty]]
-            ))
+  (:require
+    [clojure.pprint :refer [pprint]]
+    [clj-http.client :as client]
+    [mount.core :as mount :refer [defstate]]
+    [datomic.api :only [q db] :as d]
+    [datomic-schema.schema :as s]
+    [cognitect.transit :as t]
+    [clojure.set :refer [rename-keys]]
+    [clojure.walk :refer [keywordize-keys]]
+    [time-plan.clj.routes.routing :refer [running-server]]
+    )
+  (import [java.io ByteArrayInputStream ByteArrayInputStream])
+  )
 
-(def client-config
-  {:client-id     (env :time-plan-oauth2-client-id)
-   :client-secret (env :time-plan-oauth2-client-secret)
-   :callback      {:domain "https://923116b0.ngrok.io" ;; replace this for production with the appropriate site URL
-                   :path "/slack/slack.callback"}})
+(def uri "datomic:sql://timeplan?jdbc:postgresql://localhost:5432/datomic?user=datomic&password=datomic")
 
-(defn credential-fn
-  "Upon successful authentication with the third party, Friend calls
-  this function with the user's token. This function is responsible for
-  translating that into a Friend identity map with at least the :identity
-  and :roles keys. How you decide what roles to grant users is up to you;
-  you could e.g. look them up in a database.
+(defstate conn :start (d/connect uri))
 
-  You can also return nil here if you decide that the token provided
-  is invalid. This could be used to implement e.g. banning users.
+(def parts [(s/part "app")])
 
-  This example code just automatically assigns anyone who has
-  authenticated with the third party the nominal role of ::user."
-  [token]
-  {:identity token
-   :roles #{::user}})
+(def sch
+  [(s/schema user
+             (s/fields
+               [id :string :unique-identity]
+               [name :string]))
+   (s/schema team
+             (s/fields
+               [id :string :unique-identity]
+               [name :string]
+               [url :string]))
+   (s/schema timezone
+             (s/fields
+               [offset :bigint]
+               [name :string]
+               [label :string]))
+   (s/schema membership
+             (s/fields
+               [user :ref]
+               [team :ref]
+               [timezone :ref]
+               [token :string]
+               [real_name :string]
+               [image :string]))])
 
+(def timeplan-schema (concat (s/generate-parts parts)
+                             (s/generate-schema sch {:gen-all?   true
+                                                     :index-all? true})))
 
-(def uri-config
-  {:authentication-uri {:url "https://slack.com/oauth/authorize"
-                        :query {:client_id (:client-id client-config)
-                                :response_type "code"
-                                :redirect_uri (format-config-uri client-config)
-                                :scope "users:read"}}
+(defn create-schema []
+  (d/transact conn timeplan-schema))
 
-   :access-token-uri {:url "https://slack.com/api/oauth.access"
-                      :query {:client_id (:client-id client-config)
-                              :client_secret (:client-secret client-config)
-                              :grant_type "authorization_code"
-                              :redirect_uri (format-config-uri client-config)}}})
+(defonce a (atom {}))
 
-(def friend-config
-  {:allow-anon? true
-   :default-landing-uri "/"
-   :login-uri "/slack.callback"
-   :workflows [(oauth2/workflow {:client-config client-config
-                                 :uri-config uri-config
-                                 :credential-fn credential-fn})]})
+(defstate ->tokens :start (chan))
 
-(def app (wrap-resource response "public"))
+(swap! a assoc :res (client/get "https://slack.com/api/users.list"
+                                {:query-params {"token"    (get-in @a [:auth :access-token])
+                                                "presence" 1}}))
 
-(run-jetty (-> app (friend/authenticate friend-config)) {:port 3000})
+(swap! a assoc :res (client/get "https://slack.com/api/auth.test"
+                                {:query-params {"token" (get-in @a [:auth :access-token])}}))
+
+(defn string->edn [s]
+  (keywordize-keys
+    (t/read (t/reader (ByteArrayInputStream. (.getBytes s)) :json))))
+
+(def should-not-have-attributes #{:deleted :is_bot :is_restricted :is_ultra_restricted})
+
+(defn members [member-obj]
+  (->> member-obj
+       (filter
+         (fn [member]
+           (not-any? (fn [not-has-key] (not-has-key member))
+                     should-not-have-attributes)))
+       (map
+         (fn [member]
+           (select-keys member
+                        [:name :profile :real_name :tz :tz_label :tz_offset :id])))))
+
+(defn append-id [member]
+  (assoc member :db/id (:member/id member)))
+
+(defn get-timezone
+  [member]
+  (rename-keys (select-keys member [:member/tz_offset :member/tz_label :member/tz])
+               (zipmap [:member/tz_offset :member/tz_label :member/tz]
+                       [:timezone/offset :timezone/label :timezone/name])))
+
+(defn make-transactions [members]
+  (let [timezone-id-map (into {}
+                              (map-indexed
+                                (fn [idx item] [item (- -1000000 idx)])
+                                (set (map
+                                       get-timezone
+                                       members))))
+        member-transaction (->> (map (fn [member] (assoc member :member/timezone (get timezone-id-map (get-timezone member))))
+                                     members)
+                                (map #(apply dissoc % [:member/tz_offset :member/tz_label :member/tz])))
+        timezone-transaction (map (fn [[timezone id]] (assoc timezone :db/id id)) timezone-id-map)]
+    (concat member-transaction timezone-transaction)))
+
+(defn move-image-attr
+  [member] (assoc member :image
+                         (val
+                           (first
+                             (select-keys
+                               (get member :profile)
+                               [:image_original :image_512 :image_256 :image_24])))))
+
+(defn rename-member-keys
+  [member] (rename-keys member
+                        (zipmap [:name :real_name :tz
+                                 :tz_label :tz_offset :image :id]
+                                [:member/name :member/real_name
+                                 :member/tz :member/tz_label
+                                 :member/tz_offset :member/image :member/id])))
+
+(defn remove-empty-attr [member] (into {} (filter (comp not nil? val) member)))
+
+(make-transactions (map
+                     (comp #(apply dissoc % [:profile :member/id])
+                           move-image-attr remove-empty-attr append-id
+                           rename-member-keys)
+                     (members (:members ))))
+
+(defn- main [& args]
+  (when (d/create-database uri) (create-schema))
+  (mount/start)
+  )
+
