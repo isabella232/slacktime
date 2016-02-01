@@ -1,5 +1,6 @@
 (ns time-plan.clj.routes.routing
   (:require
+    [time-plan.clj.member.member :refer [->tokens a]]
     [compojure.core :refer :all]
     [cemerick.friend :as friend]
     [friend-oauth2.workflow :as oauth2 :refer [workflow]]
@@ -25,7 +26,20 @@
                           " times.</p><p>The current session: " session "</p>"))
                    (assoc :session session))))
            (GET "/authlink" request
-             (friend/authorize #{::user} "Authorized page."))
+             (let [session (:session request)]
+               #_(swap! a assoc :res (client/get "https://slack.com/api/users.list"
+                                               {:query-params {"token"    (get-in @a [:auth :access-token])
+                                                               "presence" 1}}))
+               (swap! a assoc :ses session)
+               (friend/authorize #{::user} {:status  200
+                                            :body    "check je param"
+                                            :headers {"token" (-> session
+                                                                  :cemerick.friend/identity
+                                                                  :current
+                                                                  :access-token)
+                                                      "Content-Type" "text/plain"
+                                                      }})
+               ) )
            (GET "/admin" request
              (friend/authorize #{::admin} "Only admins can see this page."))
            (friend/logout (ANY "/logout" request (ring.util.response/redirect "/"))))
@@ -33,7 +47,7 @@
 (defstate client-config :start
   {:client-id     (env :time-plan-oauth2-client-id)
    :client-secret (env :time-plan-oauth2-client-secret)
-   :callback      {:domain "https://8362aada.ngrok.io"      ; (env :domain)
+   :callback      {:domain "https://73f16b70.ngrok.io"      ; (env :domain)
                    :path   "/cards.html/slack.callback"}})
 
 (defstate uri-config :start
@@ -53,8 +67,7 @@
   ;go put on new token chan
   (go (>! ->tokens token))
   {:identity token
-   :roles    #{::user ::admin}})
-
+   :roles    #{::user ::admin}})                            ;todo remove admin
 
 (defstate app :start
           (friend/authenticate routed-app

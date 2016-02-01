@@ -4,9 +4,14 @@
     [clojure.core.async :refer [go <! >! chan]]
     [clj-http.client :as client]
     [mount.core :as mount]
+    [datomic.api :only [q db] :as d]
     [time-plan.clj.routes.routing :refer [running-server]]
     )
   )
+
+(def uri "datomic:sql://timeplan?jdbc:postgresql://localhost:5432/datomic?user=datomic&password=datomic")
+
+(mount/start)
 
 
 (defn- main [& args]

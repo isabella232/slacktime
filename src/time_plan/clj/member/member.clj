@@ -1,10 +1,13 @@
 (ns time-plan.clj.member.member
   (:require
     [time-plan.clj.external_api.transform
-     :refer [move-image-attr remove-empty-attr append-id rename-member-keys]]
+     :refer [move-image-attr remove-empty-attr append-id rename-member-keys
+             make-transactions members]]
+    [clojure.core.async :refer [go <! >! chan]]
+    [clj-http.client :as client]
     [datomic.api :only [q db] :as d]
     [datomic-schema.schema :as s]
-    [mount.core :refer [defstate]]
+    [mount.core :as mount :refer [defstate]]
     ))
 
 (def parts [(s/part "app")])
@@ -47,19 +50,20 @@
 
 (defstate ->tokens :start (chan))
 
-(go (let [token (<! ->tokens)]
-      (swap! a assoc :user-token token)))
+(mount/start)
 
-(swap! a assoc :res (client/get "https://slack.com/api/users.list"
+(go (swap! a assoc :user-token (<! ->tokens)))
+
+(fn [m] (make-transactions (map
+                             (comp #(apply dissoc % [:profile :member/id])
+                                   move-image-attr remove-empty-attr append-id
+                                   rename-member-keys)
+                             (members (:members m)))))
+
+#_(swap! a assoc :res (client/get "https://slack.com/api/users.list"
                                 {:query-params {"token"    (get-in @a [:auth :access-token])
                                                 "presence" 1}}))
 
-(swap! a assoc :res (client/get "https://slack.com/api/auth.test"
+#_(swap! a assoc :res (client/get "https://slack.com/api/auth.test"
                                 {:query-params {"token" (get-in @a [:auth :access-token])}}))
 
-
-(make-transactions (map
-                     (comp #(apply dissoc % [:profile :member/id])
-                           move-image-attr remove-empty-attr append-id
-                           rename-member-keys)
-                     (members (:members))))
