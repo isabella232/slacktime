@@ -1,18 +1,17 @@
-(ns time-plan.clj.member.member
+#_(ns time-plan.clj.member.member
   (:require
     [time-plan.clj.external_api.transform
      :refer [move-image-attr remove-empty-attr append-id rename-member-keys
              make-transactions members]]
     [clojure.core.async :refer [go <! >! chan]]
     [clj-http.client :as client]
-    [datomic.api :only [q db] :as d]
-    [datomic-schema.schema :as s]
+    #_[datomic-schema.schema :as s]
     [mount.core :as mount :refer [defstate]]
     ))
 
-(def parts [(s/part "app")])
+#_(def parts [(s/part "app")])
 
-(def sch
+#_(def sch
   [(s/schema user
              (s/fields
                [id :string :unique-identity]
@@ -36,25 +35,25 @@
                [real_name :string]
                [image :string]))])
 
-(def timeplan-schema (concat (s/generate-parts parts)
+#_(def timeplan-schema (concat (s/generate-parts parts)
                              (s/generate-schema sch {:gen-all?   true
                                                      :index-all? true})))
 
-(def uri "datomic:sql://timeplan?jdbc:postgresql://localhost:5432/datomic?user=datomic&password=datomic")
+#_(def uri "datomic:sql://timeplan?jdbc:postgresql://localhost:5432/datomic?user=datomic&password=datomic")
 
-(defstate conn :start (d/connect uri))
+#_(defstate conn :start (d/connect uri))
 
-(defn create-schema [] (d/transact conn timeplan-schema))
+#_(defn create-schema [] (d/transact conn timeplan-schema))
 
-(defonce a (atom {}))
+#_(defonce a (atom {}))
 
-(defstate ->tokens :start (chan))
+#_(defstate ->tokens :start (chan))
 
-(mount/start)
+#_(mount/start)
 
-(go (swap! a assoc :user-token (<! ->tokens)))
+#_(go (swap! a assoc :user-token (<! ->tokens)))
 
-(fn [m] (make-transactions (map
+#_(fn [m] (make-transactions (map
                              (comp #(apply dissoc % [:profile :member/id])
                                    move-image-attr remove-empty-attr append-id
                                    rename-member-keys)

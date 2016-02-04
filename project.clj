@@ -30,11 +30,23 @@
                  [postgresql "9.3-1102.jdbc41"]
                  [datomic-schema "1.3.0"]
                  [clj-http "2.0.1"]
-                 [com.datomic/datomic-pro "0.9.5344"]
+                 #_[com.datomic/datomic-pro "0.9.5344"]
                  ]
-
+  :main clj.time-plan.core
+  :min-lein-version "2.0.0"
   :plugins [[lein-cljsbuild "1.1.2" :exclusions [org.clojure/clojure]]
             [lein-environ "1.0.1"]]
+  :uberjar
+  {:source-paths ^:replace ["src/clj/time_plan"]
+   :hooks        [leiningen.cljsbuild]
+   :omit-source  true
+   :aot          :all
+   :cljsbuild    {:builds
+                  {:app
+                   {:source-paths ^:replace ["src/cljs/time_plan"]
+                    :compiler
+                                  {:optimizations :advanced
+                                   :pretty-print  false}}}}}
 
   :clean-targets ^{:protect false} ["resources/public/js/compiled"
                                     "target"]
@@ -42,21 +54,21 @@
   :source-paths ["src", "script"]
 
   :cljsbuild
-  {:builds [{:id           "devcards"
-             :source-paths ["src"]
-             :figwheel     {:devcards true}                 ;; <- note this
-             :compiler     {:main                 "time-plan.devcards.core"
-                            :asset-path           "js/compiled/devcards_out"
-                            :output-to            "resources/public/js/compiled/time_plan_devcards.js"
-                            :output-dir           "resources/public/js/compiled/devcards_out"
-                            :source-map-timestamp true}}
-            {:id           "dev"
+  {:builds [{:id           "dev"
              :source-paths ["src"]
              :figwheel     true
              :compiler     {:main                 "time-plan.cljs.core"
                             :asset-path           "js/compiled/out"
                             :output-to            "resources/public/js/compiled/time_plan.js"
                             :output-dir           "resources/public/js/compiled/out"
+                            :source-map-timestamp true}}
+            {:id           "devcards"
+             :source-paths ["src"]
+             :figwheel     {:devcards true}                 ;; <- note this
+             :compiler     {:main                 "time-plan.devcards.core"
+                            :asset-path           "js/compiled/devcards_out"
+                            :output-to            "resources/public/js/compiled/time_plan_devcards.js"
+                            :output-dir           "resources/public/js/compiled/devcards_out"
                             :source-map-timestamp true}}
             {:id           "prod"
              :source-paths ["src"]
@@ -65,7 +77,5 @@
                             :output-to     "resources/public/js/compiled/time_plan.js"
                             :optimizations :advanced}}]}
 
-  :repositories {"my.datomic.com" {:url   "https://my.datomic.com/repo"
-                                   :creds :gpg}}
 
   :figwheel {:css-dirs ["resources/public/css"] :open-file-command "open-in-intellij"})

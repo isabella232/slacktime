@@ -1,13 +1,15 @@
-(ns time-plan.devcards.core
+(ns time-plan.cljs.core
   (:require-macros
     [devcards.core :as dc :refer [defcard deftest dom-node]]
     [cljs.core.async.macros :refer [go alt!]]
     [mount.core :refer [defstate]]
     )
   (:require
+    [cljs.time-plan.external-api.transform :refer [members->transactions]]
     [cljs.test :as tst :include-macros true :refer-macros [testing is async]]
     [cljs-time.core :as dt :refer [seconds minutes hours ago from-now plus now]]
     [cljs-time.format :as dtf :refer [formatter unparse]]
+    [clojure.walk :refer [keywordize-keys]]
     [datascript.core :as d]
     [mount.core :as mount]
     [cljs.pprint :refer [pprint]]
@@ -17,7 +19,8 @@
     [cljs.core.async :refer [>! <! chan put! close! timeout]]
     [sablono.core :include-macros true]
     [cognitect.transit :as t]
-    ))
+    )
+  )
 
 (enable-console-print!)
 
@@ -31,6 +34,10 @@
                                                      .getResponseJson)))
    c))
 
+(defn add-members [conn members]
+  (d/transact! conn (members->transactions members)))
+
+(def ->tokens (chan))
 
 (defonce conn (d/create-conn {:member/timezone {:db/valueType   :db.type/ref
                                                 :db/cardinality :db.cardinality/one}}))
@@ -69,7 +76,6 @@
                                               :width         150
                                               :flexWrap      "wrap"}} (map member-component _timezone))]))))
 
-
 (def timezone-component (om/factory TimezoneComponent {:keyfn :db/id}))
 
 (defui TimezonesComponent
@@ -78,13 +84,32 @@
   Object
   (render [this]
     (let [{:keys [timezone/list]} (om/props this)]
-      (dom/div #js {:style #js {:display        "flex"
-                                :flexDirection  "row"
-                                :flexWrap       "nowrap"
-                                :justifyContent "space-between"}}
-               (concat
-                 [(dom/p nil "")]
-                 (map timezone-component list))))))
+      (dom/div nil (concat      ;todo template lang or threading to clean up this concat mess
+                     (concat
+                       [(when (= 0 (count @conn))
+                          (dom/p nil ["Go get your slack token from "
+                                      (dom/a #js {:href "https://api.slack.com/web"
+                                                  } "https://api.slack.com/web")]))
+                        (when (= 0 (count @conn))
+                          (dom/img #js {:src "img/token.png"
+                                        :width 600
+                                        :style #js {:border "1px solid #909090"}}))
+                          (dom/br nil)]
+                       (concat [(when (= 0 (count @conn))
+                                        (dom/input #js {:type        "text"
+                                                        :value       (:token @state)
+                                                        :onChange    (fn [e] (swap! state assoc :token (-> e .-target .-value)))
+                                                        :placeholder "slack token"}))]
+                                     [(when (= 0 (count @conn))
+                                        (dom/button #js {:onClick #(when-let [token (:token @state)]
+                                                                    (go (>! ->tokens token)))}
+                                                    "show timezones"))]))
+                     [(dom/div #js {:style #js {:display        "flex"
+                                                :flexDirection  "row"
+                                                :flexWrap       "nowrap"
+                                                :justifyContent "space-between"}}
+                               (concat
+                                 (map timezone-component list)))])))))
 
 (defmulti read om/dispatch)
 
@@ -99,7 +124,7 @@
 
 (defmulti mutate om/dispatch)
 
-(defmethod mutate 'time-plan.devcards.core/update-db
+(defmethod mutate 'time-plan.cljs.core/update-db
   [{:keys [state] :as env} key params]
   (swap! state merge
          (om/tree->db
@@ -120,11 +145,24 @@
 (def r (om/reconciler {:state  state
                        :parser p}))
 
-;(om/transact! r `[(time-plan.devcards.core/update-db)])
 
-(defcard timezone-component
-         (dom-node
-           (fn [_ node]
-             (om/add-root! r
-                           TimezonesComponent
-                           node))))
+(def ke (go (let [token (<! ->tokens)]
+              (go (let [users (<! (request-uri (str "https://slack.com/api/users.list?token=" token)))]
+                    (add-members conn (keywordize-keys (get (js->clj users {:keywordize-keys true}) "members")))
+                    (om/transact! r `[(time-plan.cljs.core/update-db)])
+                    )))))
+
+
+(defn main []
+  ;; conditionally start the app based on whether the #main-app-area
+  ;; node is on the page
+  (if-let [node (.getElementById js/document "main-app-area")]
+    (om/add-root! r
+                  TimezonesComponent
+                  node)))
+
+(main)
+
+;; remember to run lein figwheel and then browse to
+;; http://localhost:3449/cards.html
+
