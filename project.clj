@@ -4,16 +4,16 @@
   :license {:name "Eclipse Public License"
             :url  "http://www.eclipse.org/legal/epl-v10.html"}
 
-  :dependencies [[org.clojure/clojure "1.7.0"]
-                 [org.clojure/clojurescript "1.7.170"]
+  :dependencies [[org.clojure/clojure "1.9.0-alpha-11"]
+                 [org.clojure/clojurescript "1.9.225"]
                  [org.clojure/core.async "0.2.374"]
                  [devcards "0.2.1-5"]
                  [sablono "0.5.3"]
-                 [org.omcljs/om "1.0.0-alpha29-SNAPSHOT"]
+                 [org.omcljs/om "1.0.0-alpha41"]
                  [mount "0.1.8"]
                  [com.cognitect/transit-cljs "0.8.237"]
                  [com.cognitect/transit-clj "0.8.285"]
-                 [datascript "0.15.0"]
+                 [datascript "0.15.2"]
                  [org.clojure/core.logic "0.8.10"]
                  [figwheel-sidecar "0.5.0-4"]
                  [com.andrewmcveigh/cljs-time "0.4.0"]
